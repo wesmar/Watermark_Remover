@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36518.9 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SignGuiPatcher", "SignGuiPatcher.vcxproj", "{C3360219-5332-47A4-8C9D-63B1A305D055}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C3360219-5332-47A4-8C9D-63B1A305D055}.Release|x64.ActiveCfg = Release|x64
+		{C3360219-5332-47A4-8C9D-63B1A305D055}.Release|x64.Build.0 = Release|x64
+		{C3360219-5332-47A4-8C9D-63B1A305D055}.Release|x86.ActiveCfg = Release|Win32
+		{C3360219-5332-47A4-8C9D-63B1A305D055}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6CE184F3-C30B-46B6-8DC0-C119C2498A85}
+	EndGlobalSection
+EndGlobal
