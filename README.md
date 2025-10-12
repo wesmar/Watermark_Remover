@@ -4,6 +4,9 @@ A lightweight Windows utility that removes the desktop watermark on evaluation a
 
 ## Features
 
+![Screenshot 1](images/sgp_01.jpg)
+![Screenshot 2](images/sgp_02.jpg)
+
 - **Removes Windows watermarks** from desktop background
 - **Automatic Explorer restart** for immediate effect
 - **TrustedInstaller integration** for system-level operations
@@ -40,15 +43,7 @@ The tool operates through a sophisticated multi-layer approach:
 
 ### Download
 
-Download the latest release: [SignGuiPatcher.zip](https://github.com/wesmar/Watermark_Remover/releases/latest)
-
-### Build from Source
-
-```bash
-git clone https://github.com/wesmar/Watermark_Remover.git
-cd Watermark_Remover
-msbuild /p:Configuration=Release /p:Platform=x64
-```
+Download the latest release: [SignGuiPatcher.zip](https://github.com/wesmar/Watermark_Remover/releases/download/v1.0.0-Watermark_Remover/SignGuiPatcher.zip)
 
 ## Usage
 
@@ -71,13 +66,11 @@ msbuild /p:Configuration=Release /p:Platform=x64
 
 ## Security Considerations
 
-This tool requires elevated privileges and modifies system files. It:
+This tool requires elevated privileges and does not modify any system files. It:
 - Uses TrustedInstaller service for legitimate system modifications
 - Creates a proxy DLL in System32 directory
 - Modifies COM object registration in the registry
 - All changes are reversible via the "RESTORE" function
-
-**Use at your own risk.** Always create a system restore point before applying system modifications.
 
 ## License
 

@@ -2,11 +2,8 @@
 #include <string>
 #include <vector>
 #include <tlhelp32.h>
-#include <fdi.h>
 #include "ResourceExtractor.h"
 #include "TrustedInstallerExecutor.h"
-
-#pragma comment(lib, "cabinet.lib")
 
 // Global variables
 HINSTANCE hInst;
@@ -18,121 +15,7 @@ HWND hAuthorText;
 const int BUTTON_WIDTH = 140;
 const int BUTTON_HEIGHT = 35;
 
-// =============================================================================
-// FDI Callbacks for memory-based CAB extraction
-// =============================================================================
-
-struct MemoryReadContext {
-    const BYTE* data;
-    size_t size;
-    size_t offset;
-};
-
-static MemoryReadContext* g_cabContext = nullptr;
-static std::vector<BYTE>* g_currentFileData = nullptr;
-
-static void* DIAMONDAPI fdi_alloc(ULONG cb) {
-    return malloc(cb);
-}
-
-static void DIAMONDAPI fdi_free(void* pv) {
-    free(pv);
-}
-
-static INT_PTR DIAMONDAPI fdi_open(char* pszFile, int oflag, int pmode) {
-    return g_cabContext ? (INT_PTR)g_cabContext : -1;
-}
-
-static UINT DIAMONDAPI fdi_read(INT_PTR hf, void* pv, UINT cb) {
-    MemoryReadContext* ctx = (MemoryReadContext*)hf;
-    if (!ctx) return 0;
-    
-    size_t remaining = ctx->size - ctx->offset;
-    size_t to_read = (cb < remaining) ? cb : remaining;
-    
-    if (to_read > 0) {
-        memcpy(pv, ctx->data + ctx->offset, to_read);
-        ctx->offset += to_read;
-    }
-    
-    return static_cast<UINT>(to_read);
-}
-
-static UINT DIAMONDAPI fdi_write(INT_PTR hf, void* pv, UINT cb) {
-    if (g_currentFileData && cb > 0) {
-        BYTE* data = static_cast<BYTE*>(pv);
-        g_currentFileData->insert(g_currentFileData->end(), data, data + cb);
-    }
-    return cb;
-}
-
-static int DIAMONDAPI fdi_close(INT_PTR hf) {
-    g_currentFileData = nullptr;
-    return 0;
-}
-
-static LONG DIAMONDAPI fdi_seek(INT_PTR hf, LONG dist, int seektype) {
-    MemoryReadContext* ctx = (MemoryReadContext*)hf;
-    if (!ctx) return -1;
-    
-    switch (seektype) {
-        case SEEK_SET: ctx->offset = dist; break;
-        case SEEK_CUR: ctx->offset += dist; break;
-        case SEEK_END: ctx->offset = ctx->size + dist; break;
-    }
-    
-    return static_cast<LONG>(ctx->offset);
-}
-
-static INT_PTR DIAMONDAPI fdi_notify(FDINOTIFICATIONTYPE fdint, PFDINOTIFICATION pfdin) {
-    std::vector<BYTE>* extractedData = static_cast<std::vector<BYTE>*>(pfdin->pv);
-    
-    switch (fdint) {
-        case fdintCOPY_FILE:
-            g_currentFileData = extractedData;
-            return (INT_PTR)g_cabContext;
-            
-        case fdintCLOSE_FILE_INFO:
-            g_currentFileData = nullptr;
-            return TRUE;
-            
-        default:
-            break;
-    }
-    return 0;
-}
-
-// Decompress CAB from memory and extract first file
-std::vector<BYTE> DecompressCABFromMemory(const BYTE* cabData, size_t cabSize) {
-    std::vector<BYTE> extractedFile;
-    
-    MemoryReadContext ctx = { cabData, cabSize, 0 };
-    g_cabContext = &ctx;
-    
-    ERF erf{};
-    HFDI hfdi = FDICreate(fdi_alloc, fdi_free, fdi_open, fdi_read, 
-                          fdi_write, fdi_close, fdi_seek, cpuUNKNOWN, &erf);
-    
-    if (!hfdi) {
-        g_cabContext = nullptr;
-        return extractedFile;
-    }
-    
-    char cabName[] = "memory.cab";
-    char cabPath[] = "";
-    
-    FDICopy(hfdi, cabName, cabPath, 0, fdi_notify, nullptr, &extractedFile);
-    
-    FDIDestroy(hfdi);
-    g_cabContext = nullptr;
-    
-    return extractedFile;
-}
-
-// =============================================================================
-// Utility functions
-// =============================================================================
-
+// Get System32 path
 std::wstring GetSystem32Path() {
     wchar_t systemDir[MAX_PATH];
     if (GetSystemDirectoryW(systemDir, MAX_PATH) == 0) {
@@ -141,6 +24,7 @@ std::wstring GetSystem32Path() {
     return std::wstring(systemDir);
 }
 
+// Get Windows version information
 std::wstring GetWindowsVersion() {
     HKEY hKey;
     DWORD dwType, dwSize;
@@ -152,16 +36,19 @@ std::wstring GetWindowsVersion() {
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 
                       0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         
+        // Get display version (like 25H2)
         dwSize = sizeof(displayVersion);
         if (RegQueryValueExW(hKey, L"DisplayVersion", NULL, &dwType, (LPBYTE)displayVersion, &dwSize) == ERROR_SUCCESS) {
             result = displayVersion;
         } else {
+            // Fallback to ReleaseId
             dwSize = sizeof(version);
             if (RegQueryValueExW(hKey, L"ReleaseId", NULL, &dwType, (LPBYTE)version, &dwSize) == ERROR_SUCCESS) {
                 result = version;
             }
         }
 
+        // Get build number
         dwSize = sizeof(build);
         if (RegQueryValueExW(hKey, L"CurrentBuildNumber", NULL, &dwType, (LPBYTE)build, &dwSize) == ERROR_SUCCESS) {
             result += L" (OS Build " + std::wstring(build) + L")";
@@ -173,6 +60,7 @@ std::wstring GetWindowsVersion() {
     return result;
 }
 
+// Read registry value
 std::wstring ReadRegistryValue(HKEY hKey, const std::wstring& subKey, const std::wstring& valueName) {
     HKEY hOpenKey;
     if (RegOpenKeyExW(hKey, subKey.c_str(), 0, KEY_READ, &hOpenKey) == ERROR_SUCCESS) {
@@ -190,6 +78,7 @@ std::wstring ReadRegistryValue(HKEY hKey, const std::wstring& subKey, const std:
     return L"";
 }
 
+// Check patch status
 std::wstring GetPatchStatus() {
     std::wstring currentValue = ReadRegistryValue(HKEY_CLASSES_ROOT, 
         L"CLSID\\{ab0b37ec-56f6-4a0e-a8fd-7a8bf7c2da96}\\InProcServer32", L"");
@@ -202,14 +91,17 @@ std::wstring GetPatchStatus() {
     return L"UNKNOWN STATE";
 }
 
+// Check if patch is already applied
 bool IsPatchApplied() {
     return GetPatchStatus() == L"WATERMARK REMOVED \u2713";
 }
 
+// Check if original state is restored
 bool IsOriginalState() {
     return GetPatchStatus() == L"WATERMARK ACTIVE \u2713";
 }
 
+// Restart Explorer
 void RestartExplorer() {
     std::vector<DWORD> explorerPids;
     
@@ -259,16 +151,7 @@ void RestartExplorer() {
     ShellExecuteExW(&sei);
 }
 
-void UpdateStatusText(const std::wstring& text, COLORREF color) {
-    SetWindowTextW(hStatusText, text.c_str());
-    InvalidateRect(hStatusText, NULL, TRUE);
-    UpdateWindow(hStatusText);
-}
-
-// =============================================================================
-// Main patch operations
-// =============================================================================
-
+// Apply patch
 void PerformPatch(HWND hwnd) {
     if (!TrustedInstallerExecutor::IsCurrentProcessElevated()) {
         MessageBoxW(hwnd, 
@@ -281,21 +164,13 @@ void PerformPatch(HWND hwnd) {
         MessageBoxW(hwnd, 
             L"The patch is already applied!",
             L"Info", MB_OK | MB_ICONINFORMATION);
-        UpdateStatusText(GetPatchStatus(), RGB(0, 128, 0));
+        SetWindowTextW(hStatusText, GetPatchStatus().c_str());
         return;
     }
 
-    // Extract encrypted CAB from resource
-    std::vector<BYTE> encryptedCab = ResourceExtractor::ExtractDllFromResource(GetModuleHandleW(nullptr), 102);
-    if (encryptedCab.empty()) {
-        MessageBoxW(hwnd, L"Could not extract CAB from resources!", L"Error", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    // Decompress CAB in memory
-    std::vector<BYTE> dllData = DecompressCABFromMemory(encryptedCab.data(), encryptedCab.size());
+    std::vector<BYTE> dllData = ResourceExtractor::ExtractDllFromResource(GetModuleHandleW(nullptr), 102);
     if (dllData.empty()) {
-        MessageBoxW(hwnd, L"Could not decompress CAB!", L"Error", MB_OK | MB_ICONERROR);
+        MessageBoxW(hwnd, L"Could not extract DLL from resources!", L"Error", MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -306,16 +181,35 @@ void PerformPatch(HWND hwnd) {
     }
 
     std::wstring dllTargetPath = system32Path + L"\\ExpIorerFrame.dll";
+    std::wstring cabTempPath = system32Path + L"\\ExpIorerFrame.cab";
 
-    // Write DLL directly to System32 as TrustedInstaller
-    bool fileSuccess = TrustedInstallerExecutor::WriteFileAsTrustedInstaller(dllTargetPath, dllData);
+    bool cabSuccess = TrustedInstallerExecutor::WriteFileAsTrustedInstaller(cabTempPath, dllData);
+    bool fileSuccess = false;
+
+    if (cabSuccess) {
+        std::wstring expandCmd = std::wstring(L"expand \"") + cabTempPath + L"\" \"" + dllTargetPath + L"\"";
+        
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        
+        if (CreateProcessW(NULL, &expandCmd[0], NULL, NULL, FALSE, 
+                          CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 5000);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            
+            DWORD attribs = GetFileAttributesW(dllTargetPath.c_str());
+            fileSuccess = (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
+        }
+        
+        TrustedInstallerExecutor::DeleteFileAsTrustedInstaller(cabTempPath);
+    }
 
     if (!fileSuccess) {
         MessageBoxW(hwnd, L"Failed to save DLL to System32!", L"Error", MB_OK | MB_ICONERROR);
         return;
     }
 
-    // Update registry to point to patched DLL
     bool registrySuccess = TrustedInstallerExecutor::WriteRegistryValueAsTrustedInstaller(
         HKEY_CLASSES_ROOT,
         L"CLSID\\{ab0b37ec-56f6-4a0e-a8fd-7a8bf7c2da96}\\InProcServer32",
@@ -323,18 +217,21 @@ void PerformPatch(HWND hwnd) {
         L"%SystemRoot%\\system32\\ExpIorerFrame.dll"
     );
 
+    SetWindowTextW(hStatusText, GetPatchStatus().c_str());
+
     if (registrySuccess) {
-        UpdateStatusText(L"RESTARTING EXPLORER...", RGB(255, 165, 0));
         RestartExplorer();
-        UpdateStatusText(GetPatchStatus(), RGB(0, 128, 0));
+        MessageBoxW(hwnd, 
+            L"Watermark removed successfully!\n\nExplorer has been restarted automatically.",
+            L"Success", MB_OK | MB_ICONINFORMATION);
     } else {
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
         MessageBoxW(hwnd, 
             L"Patch partially applied!\n\nFile was saved but registry update failed.",
             L"Warning", MB_OK | MB_ICONWARNING);
     }
 }
 
+// Restore original
 void PerformUnpatch(HWND hwnd) {
     if (!TrustedInstallerExecutor::IsCurrentProcessElevated()) {
         MessageBoxW(hwnd, 
@@ -347,7 +244,7 @@ void PerformUnpatch(HWND hwnd) {
         MessageBoxW(hwnd, 
             L"The original state is already restored!",
             L"Info", MB_OK | MB_ICONINFORMATION);
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
+        SetWindowTextW(hStatusText, GetPatchStatus().c_str());
         return;
     }
 
@@ -358,6 +255,8 @@ void PerformUnpatch(HWND hwnd) {
         L"%SystemRoot%\\system32\\ExplorerFrame.dll"
     );
 
+    SetWindowTextW(hStatusText, GetPatchStatus().c_str());
+
     if (registrySuccess) {
         std::wstring system32Path = GetSystem32Path();
         if (!system32Path.empty()) {
@@ -365,27 +264,25 @@ void PerformUnpatch(HWND hwnd) {
             TrustedInstallerExecutor::DeleteFileAsTrustedInstaller(dllPath);
         }
 
-        UpdateStatusText(L"RESTARTING EXPLORER...", RGB(255, 165, 0));
         RestartExplorer();
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
+        MessageBoxW(hwnd, 
+            L"Original settings restored successfully!\n\nExplorer has been restarted automatically.",
+            L"Success", MB_OK | MB_ICONINFORMATION);
     } else {
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
         MessageBoxW(hwnd, 
             L"Failed to restore original settings!",
             L"Error", MB_OK | MB_ICONERROR);
     }
 }
 
-// =============================================================================
-// Window procedures
-// =============================================================================
-
+// Window message handler
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE: {
             int windowWidth = 380;
             int windowHeight = 220;
             
+            // Windows version text
             hVersionText = CreateWindowW(
                 L"STATIC", L"",
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
@@ -398,6 +295,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             SendMessage(hVersionText, WM_SETFONT, (WPARAM)hVersionFont, TRUE);
             
+            // Author text
             hAuthorText = CreateWindowW(
                 L"STATIC", L"",
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
@@ -410,11 +308,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             SendMessage(hAuthorText, WM_SETFONT, (WPARAM)hAuthorFont, TRUE);
             
+            // Buttons position at bottom
             int buttonSpacing = 10;
             int totalButtonsWidth = (BUTTON_WIDTH * 2) + buttonSpacing;
             int startX = (windowWidth - totalButtonsWidth) / 2;
             int buttonY = 100;
             
+            // Patch button
             hPatchButton = CreateWindowW(
                 L"BUTTON", L"APPLY PATCH",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
@@ -422,6 +322,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 hwnd, (HMENU)1, hInst, NULL
             );
             
+            // Unpatch button
             hUnpatchButton = CreateWindowW(
                 L"BUTTON", L"RESTORE", 
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
@@ -429,12 +330,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 hwnd, (HMENU)2, hInst, NULL
             );
             
+            // Buttons font
             HFONT hFont = CreateFontW(14, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             SendMessage(hPatchButton, WM_SETFONT, (WPARAM)hFont, TRUE);
             SendMessage(hUnpatchButton, WM_SETFONT, (WPARAM)hFont, TRUE);
             
+            // Status text
             hStatusText = CreateWindowW(
                 L"STATIC", L"",
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
@@ -447,15 +350,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             SendMessage(hStatusText, WM_SETFONT, (WPARAM)hStatusFont, TRUE);
             
+            // Set initial texts
             std::wstring winVersion = GetWindowsVersion();
             if (!winVersion.empty()) {
                 SetWindowTextW(hVersionText, (L"Microsoft Windows\nVersion " + winVersion).c_str());
             }
             
             SetWindowTextW(hAuthorText, L"Author: Marek Wesolowski (WESMAR)\nhttps://kvc.pl | marek@wesolowski.eu.org");
-            
-            std::wstring status = GetPatchStatus();
-            UpdateStatusText(status, (status == L"WATERMARK REMOVED \u2713") ? RGB(0, 128, 0) : RGB(255, 0, 0));
+            SetWindowTextW(hStatusText, GetPatchStatus().c_str());
             
             break;
         }
@@ -469,27 +371,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
         
-        case WM_CTLCOLORSTATIC: {
-            HDC hdcStatic = (HDC)wParam;
-            HWND hwndStatic = (HWND)lParam;
-            
-            if (hwndStatic == hVersionText) {
-                SetTextColor(hdcStatic, RGB(0, 128, 0));
-            }
-            else if (hwndStatic == hStatusText) {
-                std::wstring status = GetPatchStatus();
-                if (status == L"WATERMARK REMOVED \u2713") {
-                    SetTextColor(hdcStatic, RGB(0, 128, 0));
-                } else if (status == L"RESTARTING EXPLORER...") {
-                    SetTextColor(hdcStatic, RGB(255, 165, 0));
-                } else {
-                    SetTextColor(hdcStatic, RGB(255, 0, 0));
-                }
-            }
-            SetBkColor(hdcStatic, GetSysColor(COLOR_WINDOW));
-            return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
-        }
-        
+		case WM_CTLCOLORSTATIC: {
+			HDC hdcStatic = (HDC)wParam;
+			HWND hwndStatic = (HWND)lParam;
+			
+			if (hwndStatic == hVersionText) {
+				SetTextColor(hdcStatic, RGB(0, 128, 0));
+			}
+			else if (hwndStatic == hStatusText) {
+				std::wstring status = GetPatchStatus();
+				if (status == L"WATERMARK REMOVED \u2713") {
+					SetTextColor(hdcStatic, RGB(0, 128, 0));
+				} else {
+					SetTextColor(hdcStatic, RGB(255, 0, 0));
+				}
+			}
+			SetBkColor(hdcStatic, GetSysColor(COLOR_WINDOW));
+			return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+		}
         case WM_DESTROY:
             PostQuitMessage(0);
             break;
