@@ -105,7 +105,7 @@ SOFTWARE.
 
 ## Disclaimer
 
-This software modifies Windows system files and registry. While designed to be safe and reversible, use it at your own discretion. The author is not responsible for any system instability or data loss.
+The program does not modify any system files. It performs a single, reversible write to the Windows Registry (one byte / one character). The operation can be undone to restore the original registry value. Use responsibly; the author is not liable for any unintended consequences.
 
 ## Contributing
 
