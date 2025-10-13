@@ -1,5 +1,4 @@
 #include "TrustedInstallerExecutor.h"
-#include <iostream>
 #include <tlhelp32.h>
 
 #pragma comment(lib, "advapi32.lib")
