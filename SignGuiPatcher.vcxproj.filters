@@ -45,7 +45,7 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="ICON\kvc.ico">
+    <Image Include="ICON\SignGuiPatcher.ico">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>
