@@ -210,9 +210,10 @@ bool IsOriginalState() {
     return GetPatchStatus() == L"WATERMARK ACTIVE \u2713";
 }
 
-void RestartExplorer() {
+// Restart Explorer process with improved logic
+bool RestartExplorer() {
+    // Find all explorer.exe processes
     std::vector<DWORD> explorerPids;
-    
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W pe;
@@ -228,6 +229,7 @@ void RestartExplorer() {
         CloseHandle(hSnapshot);
     }
     
+    // Terminate all Explorer instances
     std::vector<HANDLE> processHandles;
     for (DWORD pid : explorerPids) {
         HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
@@ -237,26 +239,33 @@ void RestartExplorer() {
         }
     }
     
+    // Wait for termination
     if (!processHandles.empty()) {
         WaitForMultipleObjects(
             static_cast<DWORD>(processHandles.size()),
             processHandles.data(),
             TRUE,
-            5000
+            500
         );
         
         for (HANDLE h : processHandles) {
             CloseHandle(h);
         }
     }
-     
+    
+    // Start new Explorer instance
     SHELLEXECUTEINFOW sei = { sizeof(sei) };
     sei.fMask = SEE_MASK_FLAG_NO_UI;
     sei.lpFile = L"explorer.exe";
-    sei.lpParameters = L"/e,";
-    sei.nShow = SW_HIDE;
+    sei.lpParameters = L"/e,";  // Prevents opening folder window
+    sei.nShow = SW_HIDE;        // Hide the window
     
-    ShellExecuteExW(&sei);
+    if (!ShellExecuteExW(&sei)) {
+        return false;
+    }
+    
+    Sleep(1000);  // Give Explorer time to start
+    return true;
 }
 
 void UpdateStatusText(const std::wstring& text, COLORREF color) {
@@ -266,56 +275,51 @@ void UpdateStatusText(const std::wstring& text, COLORREF color) {
 }
 
 // =============================================================================
-// Main patch operations
+// Main patch operations - Improved with better error handling
 // =============================================================================
 
 void PerformPatch(HWND hwnd) {
     if (!TrustedInstallerExecutor::IsCurrentProcessElevated()) {
-        MessageBoxW(hwnd, 
-            L"Program must be run as Administrator!",
-            L"Permission Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: RUN AS ADMIN!", RGB(255, 0, 0));
         return;
     }
 
     if (IsPatchApplied()) {
-        MessageBoxW(hwnd, 
-            L"The patch is already applied!",
-            L"Info", MB_OK | MB_ICONINFORMATION);
         UpdateStatusText(GetPatchStatus(), RGB(0, 128, 0));
         return;
     }
 
-    // Extract encrypted CAB from resource
+    UpdateStatusText(L"EXTRACTING RESOURCES...", RGB(255, 165, 0));
     std::vector<BYTE> encryptedCab = ResourceExtractor::ExtractDllFromResource(GetModuleHandleW(nullptr), 102);
     if (encryptedCab.empty()) {
-        MessageBoxW(hwnd, L"Could not extract CAB from resources!", L"Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: EXTRACTION FAILED!", RGB(255, 0, 0));
         return;
     }
 
-    // Decompress CAB in memory
+    UpdateStatusText(L"DECOMPRESSING...", RGB(255, 165, 0));
     std::vector<BYTE> dllData = DecompressCABFromMemory(encryptedCab.data(), encryptedCab.size());
     if (dllData.empty()) {
-        MessageBoxW(hwnd, L"Could not decompress CAB!", L"Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: DECOMPRESSION FAILED!", RGB(255, 0, 0));
         return;
     }
 
     std::wstring system32Path = GetSystem32Path();
     if (system32Path.empty()) {
-        MessageBoxW(hwnd, L"Could not find System32 folder!", L"Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: SYSTEM32 NOT FOUND!", RGB(255, 0, 0));
         return;
     }
 
     std::wstring dllTargetPath = system32Path + L"\\ExpIorerFrame.dll";
 
-    // Write DLL directly to System32 as TrustedInstaller
+    UpdateStatusText(L"WRITING FILE...", RGB(255, 165, 0));
     bool fileSuccess = TrustedInstallerExecutor::WriteFileAsTrustedInstaller(dllTargetPath, dllData);
 
     if (!fileSuccess) {
-        MessageBoxW(hwnd, L"Failed to save DLL to System32!", L"Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: FILE WRITE FAILED!", RGB(255, 0, 0));
         return;
     }
 
-    // Update registry to point to patched DLL
+    UpdateStatusText(L"UPDATING REGISTRY...", RGB(255, 165, 0));
     bool registrySuccess = TrustedInstallerExecutor::WriteRegistryValueAsTrustedInstaller(
         HKEY_CLASSES_ROOT,
         L"CLSID\\{ab0b37ec-56f6-4a0e-a8fd-7a8bf7c2da96}\\InProcServer32",
@@ -325,32 +329,28 @@ void PerformPatch(HWND hwnd) {
 
     if (registrySuccess) {
         UpdateStatusText(L"RESTARTING EXPLORER...", RGB(255, 165, 0));
-        RestartExplorer();
-        UpdateStatusText(GetPatchStatus(), RGB(0, 128, 0));
+        if (RestartExplorer()) {
+            UpdateStatusText(GetPatchStatus(), RGB(0, 128, 0));
+        } else {
+            UpdateStatusText(L"RESTART EXPLORER MANUALLY!", RGB(255, 165, 0));
+        }
     } else {
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
-        MessageBoxW(hwnd, 
-            L"Patch partially applied!\n\nFile was saved but registry update failed.",
-            L"Warning", MB_OK | MB_ICONWARNING);
+        UpdateStatusText(L"ERROR: REGISTRY FAILED!", RGB(255, 0, 0));
     }
 }
 
 void PerformUnpatch(HWND hwnd) {
     if (!TrustedInstallerExecutor::IsCurrentProcessElevated()) {
-        MessageBoxW(hwnd, 
-            L"Program must be run as Administrator!",
-            L"Permission Error", MB_OK | MB_ICONERROR);
+        UpdateStatusText(L"ERROR: RUN AS ADMIN!", RGB(255, 0, 0));
         return;
     }
 
     if (IsOriginalState()) {
-        MessageBoxW(hwnd, 
-            L"The original state is already restored!",
-            L"Info", MB_OK | MB_ICONINFORMATION);
         UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
         return;
     }
 
+    UpdateStatusText(L"RESTORING REGISTRY...", RGB(255, 165, 0));
     bool registrySuccess = TrustedInstallerExecutor::WriteRegistryValueAsTrustedInstaller(
         HKEY_CLASSES_ROOT,
         L"CLSID\\{ab0b37ec-56f6-4a0e-a8fd-7a8bf7c2da96}\\InProcServer32",
@@ -358,21 +358,32 @@ void PerformUnpatch(HWND hwnd) {
         L"%SystemRoot%\\system32\\ExplorerFrame.dll"
     );
 
-    if (registrySuccess) {
-        std::wstring system32Path = GetSystem32Path();
-        if (!system32Path.empty()) {
-            std::wstring dllPath = system32Path + L"\\ExpIorerFrame.dll";
-            TrustedInstallerExecutor::DeleteFileAsTrustedInstaller(dllPath);
-        }
+    if (!registrySuccess) {
+        UpdateStatusText(L"ERROR: REGISTRY FAILED!", RGB(255, 0, 0));
+        return;
+    }
 
-        UpdateStatusText(L"RESTARTING EXPLORER...", RGB(255, 165, 0));
-        RestartExplorer();
-        UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
+    UpdateStatusText(L"RESTARTING EXPLORER...", RGB(255, 165, 0));
+    
+    if (!RestartExplorer()) {
+        UpdateStatusText(L"RESTART EXPLORER MANUALLY!", RGB(255, 165, 0));
+        return;
+    }
+
+    Sleep(1000);
+    
+    std::wstring system32Path = GetSystem32Path();
+    if (!system32Path.empty()) {
+        std::wstring dllPath = system32Path + L"\\ExpIorerFrame.dll";
+        
+        UpdateStatusText(L"REMOVING FILE...", RGB(255, 165, 0));
+        if (!TrustedInstallerExecutor::DeleteFileAsTrustedInstaller(dllPath)) {
+            UpdateStatusText(L"FILE REMOVED ON RESTART", RGB(255, 165, 0));
+        } else {
+            UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
+        }
     } else {
         UpdateStatusText(GetPatchStatus(), RGB(255, 0, 0));
-        MessageBoxW(hwnd, 
-            L"Failed to restore original settings!",
-            L"Error", MB_OK | MB_ICONERROR);
     }
 }
 
