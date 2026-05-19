@@ -22,8 +22,10 @@ where watermarks are rendered via `UxTheme!DrawTextWithGlow` (ordinal 126).
 
 ## 📦 Archive Contents (`SignGuiPatcher.7z` — ${SIZE_7Z})
 
+> **🔑 Archive password: `github.com`**
+
 ```
-SignGuiPatcher.7z   (password: github.com)
+SignGuiPatcher.7z
 └── SignGuiPatcher.exe    Patcher (MASM x64, no CRT, requireAdministrator)
 ```
 
