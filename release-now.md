@@ -48,7 +48,7 @@ Explorer restarts automatically. No logout required. Fully reversible.
 
 ## ✅ Tested On
 
-- Windows 11 Insider Preview **10.0.28000** (Canary, 26H1) — all watermarks suppressed
+- Windows 11 26H1 **10.0.28000** — all watermarks suppressed
 - Windows 10 22H2 — Test Mode + build string suppressed
 - Windows 7 — evaluation watermark suppressed
 
