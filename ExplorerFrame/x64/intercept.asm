@@ -81,42 +81,75 @@ ContainsBrandingWatermark proc
     call    wcslen_p
     mov     edi, eax                        ; edi = patternLen
 
-    ; --- Special case: pattern[3] in %xxx%middle%... format ---
+    ; --- Special case: pattern[3] — locale-safe fixed segment extraction ---
+    ; EN: "%ws Build %ws"  → extract " Build " (between specs)
+    ; CN: "内部版本 %ws"   → extract "内部版本 " (before first %)
+    ; XX: "%ws 版本 %ws"   → extract " 版本 " (between specs)
+    ; Strategy: find first '%' anywhere; if text precedes it use that,
+    ; else skip the format spec ("%ws" = 3 chars) and extract until next '%'.
     cmp     r15d, 3
     jne     @cbw_plain
 
-    cmp     word ptr [rsi], WILDCARD_MARKER ; pattern[0] == '%'?
-    jne     @cbw_plain
-    cmp     edi, 4
-    jle     @cbw_next                       ; pattern too short
+    cmp     edi, 2
+    jle     @cbw_next                       ; pattern too short for any fixed text
 
-    ; Find the second '%' starting from index 5 (skip %xxx%, 4 chars + %)
-    ; segStart = 4, scan forward from index 5 until '%' or end
-    mov     ecx, 5                          ; ecx = scan index
-@cbw_scan:
+    ; Scan for first '%' at any position
+    xor     ecx, ecx
+@cbw_fp_scan:
     cmp     ecx, edi
-    jge     @cbw_seg_done                   ; hit end without second %
+    jge     @cbw_plain                      ; no '%' found → fall back to plain search
     movzx   eax, word ptr [rsi + rcx*2]
     cmp     eax, WILDCARD_MARKER
-    je      @cbw_seg_done
+    je      @cbw_fp_found
     inc     ecx
-    jmp     @cbw_scan
+    jmp     @cbw_fp_scan
 
-@cbw_seg_done:
-    ; segment: pattern+4, length = ecx-4
-    mov     ebx, ecx
-    sub     ebx, 4                          ; ebx = segment length
-    test    ebx, ebx
-    jz      @cbw_next
+@cbw_fp_found:
+    ; ecx = index of first '%'
+    test    ecx, ecx
+    jz      @cbw_skip_spec                  ; starts with '%' → skip format spec
 
-    ; WideStrFind(text, textLen, pattern+4, segLen)
-    ; needle = rsi+8 (offset 4 WCHARs = 8 bytes)
+    ; Fixed text BEFORE first '%': pattern[0..ecx-1], length = ecx
+    mov     ebx, ecx                        ; save length before rcx clobbered
     mov     rcx, r12
     mov     edx, r13d
-    lea     r8, [rsi + 8]                  ; pattern + 4 WCHARs
+    mov     r8, rsi                         ; needle = pattern[0]
     mov     r9d, ebx
     call    WideStrFind
-    test    eax, eax                        ; 0 = found, -1 = not found
+    test    eax, eax
+    jz      @cbw_true
+    jmp     @cbw_next
+
+@cbw_skip_spec:
+    ; Skip "%ws" (3 chars) to land after the format specifier
+    add     ecx, 3
+    cmp     ecx, edi
+    jge     @cbw_next                       ; nothing after spec
+
+    ; Scan from ecx until next '%' or end → fixed segment between specs
+    mov     ebx, ecx                        ; ebx = segment start index
+@cbw_seg_scan:
+    cmp     ecx, edi
+    jge     @cbw_got_seg
+    movzx   eax, word ptr [rsi + rcx*2]
+    cmp     eax, WILDCARD_MARKER
+    je      @cbw_got_seg
+    inc     ecx
+    jmp     @cbw_seg_scan
+
+@cbw_got_seg:
+    ; segment: pattern[ebx..ecx-1], length = ecx - ebx
+    mov     eax, ecx
+    sub     eax, ebx
+    test    eax, eax
+    jz      @cbw_next                       ; empty segment (e.g. "%ws%ws") → skip
+
+    mov     r9d, eax
+    mov     rcx, r12
+    mov     edx, r13d
+    lea     r8, [rsi + rbx*2]              ; &pattern[segStart]
+    call    WideStrFind
+    test    eax, eax
     jz      @cbw_true
     jmp     @cbw_next
 
