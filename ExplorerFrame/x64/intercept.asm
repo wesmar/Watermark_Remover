@@ -16,9 +16,21 @@ include globals.inc
 EXTRN LoadStringW           :PROC
 EXTRN ExtTextOutW           :PROC
 EXTRN DrawTextW             :PROC
+EXTRN LoadLibraryW          :PROC
+EXTRN GetProcAddress        :PROC
 EXTRN wcslen_p              :PROC
 EXTRN wcscpy_p              :PROC
 EXTRN WideStrFind           :PROC
+
+; ==============================================================================
+; CONSTANTS / STATE
+; ==============================================================================
+.const
+str_uxtheme_w   dw 'u','x','t','h','e','m','e','.','d','l','l',0
+
+.data
+    align 8
+g_pfnDrawTextWithGlow dq 0
 
 ; ==============================================================================
 ; CODE
@@ -465,9 +477,9 @@ InterceptedDrawTextW endp
 ; ==============================================================================
 ; InterceptedBrandingLoadStringForEdition - Hook for BrandingLoadStringForEdition
 ;
-; Shell32!CDesktopWatermark::s_DesktopBuildPaint calls this to get the activation
-; watermark text. Returning 0 causes shell32 to jump past all rendering calls
-; (confirmed via disasm: `test eax,eax / je +0x9ed` immediately after the call).
+; Shell32!CDesktopWatermark::s_DesktopBuildPaint calls this for the Basebrd
+; branding line. Returning 0 makes shell32 clear that line before it measures
+; and paints the desktop watermark strings.
 ;
 ; RCX = brandingName (LPCWSTR)
 ; EDX = id
@@ -492,9 +504,9 @@ InterceptedBrandingLoadStringForEdition endp
 ; ==============================================================================
 ; InterceptedDrawTextWithGlow - Hook for UxTheme!DrawTextWithGlow (ordinal 126)
 ;
-; Shell32!CDesktopWatermark::s_DesktopBuildPaint uses this to render all
-; watermark strings with a glow effect (Test Mode, Build string, etc.).
-; Returning S_OK without drawing suppresses all glow-rendered watermark text.
+; Shell32!CDesktopWatermark::s_DesktopBuildPaint uses this to render watermark
+; strings with a glow effect. Suppress only strings matching our watermark
+; patterns; forward all other text to the real UxTheme ordinal 126 export.
 ;
 ; Signature (x64):
 ;   RCX = HDC
@@ -511,11 +523,69 @@ InterceptedBrandingLoadStringForEdition endp
 ;   [rsp+58h] = lParam
 ; Returns: HRESULT S_OK = 0
 ;
-; Leaf function.
 ; ==============================================================================
 PUBLIC InterceptedDrawTextWithGlow
 InterceptedDrawTextWithGlow proc
-    xor     eax, eax    ; S_OK — text "drawn" (suppressed)
+    push    rbx
+    push    r12
+    push    r13
+    push    r14
+    push    r15
+    sub     rsp, 20h
+
+    mov     r12, rcx
+    mov     r13, rdx
+    mov     r14, r8
+    mov     r15, r9
+
+    test    r13, r13
+    jz      @dtwg_forward
+
+    mov     rcx, r13
+    call    ContainsBrandingWatermark
+    test    eax, eax
+    jnz     @dtwg_suppress
+
+@dtwg_forward:
+    mov     rbx, [g_pfnDrawTextWithGlow]
+    test    rbx, rbx
+    jnz     @dtwg_have_pfn
+
+    lea     rcx, str_uxtheme_w
+    call    LoadLibraryW
+    test    rax, rax
+    jz      @dtwg_suppress
+
+    mov     rcx, rax
+    mov     edx, 126                    ; MAKEINTRESOURCEA(126)
+    call    GetProcAddress
+    test    rax, rax
+    jz      @dtwg_suppress
+    mov     [g_pfnDrawTextWithGlow], rax
+    mov     rbx, rax
+
+@dtwg_have_pfn:
+    mov     r11, rbx
+    mov     rcx, r12
+    mov     rdx, r13
+    mov     r8,  r14
+    mov     r9,  r15
+    add     rsp, 20h
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     rbx
+    jmp     r11
+
+@dtwg_suppress:
+    xor     eax, eax                    ; S_OK — pretend text was drawn
+    add     rsp, 20h
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     rbx
     ret
 InterceptedDrawTextWithGlow endp
 
