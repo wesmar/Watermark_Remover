@@ -20,6 +20,7 @@ EXTRN UpdateWindow          :PROC
 EXTRN DestroyWindow         :PROC
 EXTRN PostQuitMessage       :PROC
 EXTRN SetWindowTextW        :PROC
+EXTRN SetWindowPos          :PROC
 EXTRN LoadCursorW           :PROC
 EXTRN LoadIconW             :PROC
 EXTRN InvalidateRect        :PROC
@@ -701,6 +702,36 @@ WndProc proc frame
     jmp     @wp_ret
 
     ; ------------------------------------------------------------------
+    ; WM_DPICHANGED - resize window to suggested rect from lParam
+    ; ------------------------------------------------------------------
+@wp_dpichanged:
+    cmp     r13d, WM_DPICHANGED
+    jne     @wp_default
+
+    ; rdi = lParam = RECT* {left, top, right, bottom}
+    sub     rsp, 18h                                    ; room for args 5,6,7
+
+    mov     eax, dword ptr [rdi+8]                      ; right
+    sub     eax, dword ptr [rdi+0]                      ; - left = width
+    mov     dword ptr [rsp+20h], eax                    ; arg5: cx
+
+    mov     eax, dword ptr [rdi+12]                     ; bottom
+    sub     eax, dword ptr [rdi+4]                      ; - top = height
+    mov     dword ptr [rsp+28h], eax                    ; arg6: cy
+
+    mov     dword ptr [rsp+30h], SWP_NOZORDER or SWP_NOACTIVATE  ; arg7: flags
+
+    mov     r9d,  dword ptr [rdi+4]                     ; arg4: Y
+    mov     r8d,  dword ptr [rdi+0]                     ; arg3: X
+    xor     edx,  edx                                   ; arg2: hWndInsertAfter = NULL
+    mov     rcx,  r12                                   ; arg1: hwnd
+    call    SetWindowPos
+
+    add     rsp, 18h
+    xor     eax, eax
+    jmp     @wp_ret
+
+    ; ------------------------------------------------------------------
     ; Default
     ; ------------------------------------------------------------------
 @wp_default:
@@ -767,14 +798,14 @@ CreateMainWindow proc
     test    eax, eax
     jz      @cmw_fail
 
-    ; Window (380x250)
+    ; Window (380x290) — extra height absorbs DPI-scaled title bar at 150%+
     xor     rax, rax
     mov     qword ptr [rsp+58h], rax
     mov     rbx, g_hInstance
     mov     qword ptr [rsp+50h], rbx
     mov     qword ptr [rsp+48h], rax
     mov     qword ptr [rsp+40h], rax
-    mov     dword ptr [rsp+38h], 250
+    mov     dword ptr [rsp+38h], 290
     mov     dword ptr [rsp+30h], 380
     mov     dword ptr [rsp+28h], 80000000h
     mov     dword ptr [rsp+20h], 80000000h

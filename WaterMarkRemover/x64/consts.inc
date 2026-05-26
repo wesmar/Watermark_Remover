@@ -95,6 +95,9 @@ WM_COMMAND                  EQU 0111h
 WM_SETFONT                  EQU 0030h
 WM_THEMECHANGED             EQU 031Ah
 WM_CTLCOLORSTATIC           EQU 0138h
+WM_DPICHANGED               EQU 02E0h
+SWP_NOZORDER                EQU 0004h
+SWP_NOACTIVATE              EQU 0010h
 
 ; ------------------------------------------------------------------------------
 ; CONTROL IDs
